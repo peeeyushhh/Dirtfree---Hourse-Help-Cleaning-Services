@@ -6,8 +6,15 @@ services:
     container_name: dirtfree-ui
     restart: unless-stopped
     ports:
-      - "80:3000"
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - ./data:/app/data
+    deploy:
+      resources:
+        limits:
+          memory: 750M
+        reservations:
+          memory: 200M
     environment:
       - NODE_ENV=production
       - PORT=3000
