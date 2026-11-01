@@ -25,6 +25,8 @@ dist/
 .env.production
 .env.development
 *.pem
+*.key
+*.pub
 
 # Logs
 *.log
