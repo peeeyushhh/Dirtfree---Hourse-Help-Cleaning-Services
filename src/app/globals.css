@@ -1,0 +1,87 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --background: #ffffff;
+    --foreground: #090d16;
+    --primary: #0284c7;
+    --accent: #10b981;
+    --card: #ffffff;
+    --border: #e2e8f0;
+  }
+
+  body {
+    background-color: var(--background);
+    color: var(--foreground);
+    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', 'Inter', system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    overflow-x: hidden;
+  }
+}
+
+/* 3D Material Design & Neomorphic Layering */
+.material-card {
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(226, 232, 240, 0.8);
+  box-shadow: 
+    0 1px 3px 0 rgba(0, 0, 0, 0.02),
+    0 20px 40px -15px rgba(15, 23, 42, 0.06),
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.8);
+}
+
+.material-card-dark {
+  background: rgba(15, 23, 42, 0.95);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 
+    0 25px 50px -12px rgba(0, 0, 0, 0.4),
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.15);
+}
+
+.phone-mockup-3d {
+  transform: perspective(1200px) rotateY(-8deg) rotateX(6deg) rotateZ(1deg);
+  transition: transform 0.5s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.5s ease;
+  box-shadow: 
+    -20px 30px 60px -15px rgba(15, 23, 42, 0.25),
+    0 0 0 1px rgba(15, 23, 42, 0.08),
+    inset 0 2px 4px 0 rgba(255, 255, 255, 0.8);
+}
+
+.phone-mockup-3d:hover {
+  transform: perspective(1200px) rotateY(-2deg) rotateX(2deg) rotateZ(0deg) scale(1.02);
+  box-shadow: 
+    -10px 40px 80px -20px rgba(15, 23, 42, 0.3),
+    0 0 0 1px rgba(15, 23, 42, 0.1);
+}
+
+/* Glass effect utilities */
+.glass {
+  background: rgba(255, 255, 255, 0.82);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+
+.glass-dark {
+  background: rgba(15, 23, 42, 0.85);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+
+/* Scrollbar hide */
+.scrollbar-none {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+}
+
+/* Selection highlight */
+::selection {
+  background: rgba(16, 185, 129, 0.2);
+  color: #047857;
+}

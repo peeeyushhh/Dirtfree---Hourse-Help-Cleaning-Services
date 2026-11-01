@@ -1,0 +1,33 @@
+name: Deploy DirtFree UI to Oracle Cloud Ubuntu
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Deploy via SSH to Oracle Cloud VPS
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_IP }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          port: ${{ secrets.SERVER_PORT || 22 }}
+          script: |
+            set -e
+            echo "🚀 Deploying DirtFree UI to Oracle Cloud VPS..."
+            cd /home/${{ secrets.SERVER_USER }}/dirtfree-ui
+            git pull origin main
+            docker compose down
+            docker compose up --build -d
+            docker image prune -f
+            echo "✅ Deployment completed successfully!"
+
