@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { getPostgresPool, query, ensurePostgresSchema } from './postgres';
 
 export interface ServiceTier {
   id: string;
@@ -379,19 +380,100 @@ class DatabaseStore {
     fs.renameSync(tempFile, DB_FILE);
   }
 
-  public getServices(): ServiceItem[] {
+  public async getServices(): Promise<ServiceItem[]> {
+    if (getPostgresPool()) {
+      try {
+        await ensurePostgresSchema();
+        const res = await query('SELECT * FROM services ORDER BY starting_price ASC');
+        if (res.rows.length > 0) {
+          return res.rows.map((r) => ({
+            id: r.id,
+            title: r.title,
+            category: r.category,
+            rating: parseFloat(r.rating) || 4.9,
+            reviewsCount: r.reviews_count || 0,
+            startingPrice: parseFloat(r.starting_price) || 0,
+            image: r.image,
+            badge: r.badge,
+            description: r.description,
+            tiers: typeof r.tiers === 'string' ? JSON.parse(r.tiers) : (r.tiers || []),
+            inclusions: typeof r.inclusions === 'string' ? JSON.parse(r.inclusions) : (r.inclusions || []),
+            exclusions: typeof r.exclusions === 'string' ? JSON.parse(r.exclusions) : (r.exclusions || []),
+          }));
+        }
+      } catch (err) {
+        console.warn('PostgreSQL getServices notice, using store fallback:', err);
+      }
+    }
     return this.ensureStore().services;
   }
 
-  public getServiceById(id: string): ServiceItem | undefined {
-    return this.ensureStore().services.find((s) => s.id === id);
+  public async getServiceById(id: string): Promise<ServiceItem | undefined> {
+    const services = await this.getServices();
+    return services.find((s) => s.id === id);
   }
 
-  public getSlots(): TimeSlot[] {
+  public async getSlots(): Promise<TimeSlot[]> {
+    if (getPostgresPool()) {
+      try {
+        await ensurePostgresSchema();
+        const res = await query('SELECT * FROM slots');
+        if (res.rows.length > 0) {
+          return res.rows.map((r) => ({
+            id: r.id,
+            label: r.label,
+            timeRange: r.time_range,
+            period: r.period,
+            icon: r.icon,
+            maxCapacity: r.max_capacity,
+          }));
+        }
+      } catch (err) {
+        console.warn('PostgreSQL getSlots notice, using store fallback:', err);
+      }
+    }
     return this.ensureStore().slots;
   }
 
-  public getSlotAvailability(date: string) {
+  public async getSlotAvailability(date: string) {
+    if (getPostgresPool()) {
+      try {
+        await ensurePostgresSchema();
+        const slots = await this.getSlots();
+        const bookingsRes = await query(
+          "SELECT slot_id, COUNT(*) as count FROM bookings WHERE booking_date = $1 AND status != 'CANCELLED' GROUP BY slot_id",
+          [date]
+        );
+        const bookedMap = new Map<string, number>();
+        for (const row of bookingsRes.rows) {
+          bookedMap.set(row.slot_id, parseInt(row.count, 10));
+        }
+
+        return slots.map((slot) => {
+          const bookedCount = bookedMap.get(slot.id) || 0;
+          const remainingCapacity = Math.max(0, slot.maxCapacity - bookedCount);
+          const isAvailable = remainingCapacity > 0;
+
+          let statusBadge = 'Available';
+          if (!isAvailable) {
+            statusBadge = 'Sold Out';
+          } else if (remainingCapacity <= 2) {
+            statusBadge = `${remainingCapacity} left - Filling Fast`;
+          }
+
+          return {
+            ...slot,
+            bookedCount,
+            remainingCapacity,
+            isAvailable,
+            statusBadge,
+          };
+        });
+      } catch (err) {
+        console.warn('PostgreSQL getSlotAvailability notice, using store fallback:', err);
+      }
+    }
+
     const data = this.ensureStore();
     const bookingsOnDate = data.bookings.filter((b) => b.date === date && b.status !== 'CANCELLED');
 
@@ -417,7 +499,7 @@ class DatabaseStore {
     });
   }
 
-  public createBooking(payload: {
+  public async createBooking(payload: {
     customerName: string;
     phone: string;
     serviceId: string;
@@ -427,7 +509,7 @@ class DatabaseStore {
     address: BookingAddress;
     paymentMethod?: 'PAY_AFTER_SERVICE' | 'UPI';
     notes?: string;
-  }): BookingRecord {
+  }): Promise<BookingRecord> {
     const data = this.ensureStore();
     const service = data.services.find((s) => s.id === payload.serviceId);
     if (!service) {
@@ -446,14 +528,10 @@ class DatabaseStore {
       throw new Error(`Selected time slot (${slot.timeRange}) on ${payload.date} is fully booked.`);
     }
 
-    // Generate reference code DF-XXXXX
     const randomNum = Math.floor(10000 + Math.random() * 90000);
     const bookingId = `DF-${randomNum}`;
-
-    // 4 digit verification OTP for customer to give technician
     const otp = Math.floor(1000 + Math.random() * 9000).toString();
 
-    // Mock partner auto-assignment
     const partners = [
       { name: 'Ramesh Sharma', phone: '+91 98201 44820', rating: 4.95, uniformVerified: true },
       { name: 'Sanjay Yadav', phone: '+91 98192 33110', rating: 4.9, uniformVerified: true },
@@ -484,28 +562,149 @@ class DatabaseStore {
       updatedAt: now,
     };
 
+    if (getPostgresPool()) {
+      try {
+        await ensurePostgresSchema();
+        await query(
+          `INSERT INTO bookings (
+            id, customer_name, phone, service_id, service_name, tier_id, tier_name,
+            booking_date, slot_id, slot_time, address, total_amount, payment_method,
+            otp, status, partner, notes, created_at, updated_at
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)`,
+          [
+            booking.id,
+            booking.customerName,
+            booking.phone,
+            booking.serviceId,
+            booking.serviceName,
+            booking.tierId,
+            booking.tierName,
+            booking.date,
+            booking.slotId,
+            booking.slotTime,
+            JSON.stringify(booking.address),
+            booking.totalAmount,
+            booking.paymentMethod,
+            booking.otp,
+            booking.status,
+            JSON.stringify(booking.partner),
+            booking.notes || null,
+            booking.createdAt,
+            booking.updatedAt,
+          ]
+        );
+      } catch (err) {
+        console.warn('PostgreSQL insert notice, mirrored to store:', err);
+      }
+    }
+
     data.bookings.unshift(booking);
     this.saveStore(data);
     return booking;
   }
 
-  public getBookingById(id: string): BookingRecord | undefined {
+  public async getBookingById(id: string): Promise<BookingRecord | undefined> {
+    if (getPostgresPool()) {
+      try {
+        await ensurePostgresSchema();
+        const res = await query('SELECT * FROM bookings WHERE UPPER(id) = UPPER($1)', [id]);
+        if (res.rows.length > 0) {
+          const r = res.rows[0];
+          return {
+            id: r.id,
+            customerName: r.customer_name,
+            phone: r.phone,
+            serviceId: r.service_id,
+            serviceName: r.service_name,
+            tierId: r.tier_id,
+            tierName: r.tier_name,
+            date: typeof r.booking_date === 'string' ? r.booking_date.split('T')[0] : new Date(r.booking_date).toISOString().split('T')[0],
+            slotId: r.slot_id,
+            slotTime: r.slot_time,
+            address: typeof r.address === 'string' ? JSON.parse(r.address) : r.address,
+            totalAmount: parseFloat(r.total_amount),
+            paymentMethod: r.payment_method,
+            otp: r.otp,
+            status: r.status,
+            partner: typeof r.partner === 'string' ? JSON.parse(r.partner) : r.partner,
+            notes: r.notes,
+            createdAt: r.created_at,
+            updatedAt: r.updated_at,
+          };
+        }
+      } catch {}
+    }
     return this.ensureStore().bookings.find((b) => b.id.toUpperCase() === id.toUpperCase());
   }
 
-  public getBookingsByPhone(phone: string): BookingRecord[] {
+  public async getBookingsByPhone(phone: string): Promise<BookingRecord[]> {
     const cleanPhone = phone.replace(/\D/g, '').slice(-10);
+
+    if (getPostgresPool()) {
+      try {
+        await ensurePostgresSchema();
+        const res = await query(
+          `SELECT * FROM bookings 
+           WHERE RIGHT(REGEXP_REPLACE(phone, '\\D', '', 'g'), 10) = $1 
+           ORDER BY created_at DESC`,
+          [cleanPhone]
+        );
+        if (res.rows.length > 0) {
+          return res.rows.map((r) => ({
+            id: r.id,
+            customerName: r.customer_name,
+            phone: r.phone,
+            serviceId: r.service_id,
+            serviceName: r.service_name,
+            tierId: r.tier_id,
+            tierName: r.tier_name,
+            date: typeof r.booking_date === 'string' ? r.booking_date.split('T')[0] : new Date(r.booking_date).toISOString().split('T')[0],
+            slotId: r.slot_id,
+            slotTime: r.slot_time,
+            address: typeof r.address === 'string' ? JSON.parse(r.address) : r.address,
+            totalAmount: parseFloat(r.total_amount),
+            paymentMethod: r.payment_method,
+            otp: r.otp,
+            status: r.status,
+            partner: typeof r.partner === 'string' ? JSON.parse(r.partner) : r.partner,
+            notes: r.notes,
+            createdAt: r.created_at,
+            updatedAt: r.updated_at,
+          }));
+        }
+      } catch (err) {
+        console.warn('PostgreSQL getBookingsByPhone notice, using store fallback:', err);
+      }
+    }
+
     return this.ensureStore().bookings.filter((b) => {
       const bPhone = b.phone.replace(/\D/g, '').slice(-10);
       return bPhone === cleanPhone;
     });
   }
 
-  public updateBookingStatus(
+  public async updateBookingStatus(
     id: string,
     status: BookingRecord['status'],
     partnerUpdate?: BookingRecord['partner']
-  ): BookingRecord | null {
+  ): Promise<BookingRecord | null> {
+    const now = new Date().toISOString();
+
+    if (getPostgresPool()) {
+      try {
+        await ensurePostgresSchema();
+        const partnerJson = partnerUpdate ? JSON.stringify(partnerUpdate) : null;
+        await query(
+          `UPDATE bookings 
+           SET status = $1, partner = COALESCE($2, partner), updated_at = $3 
+           WHERE UPPER(id) = UPPER($4)`,
+          [status, partnerJson, now, id]
+        );
+      } catch (err) {
+        console.warn('PostgreSQL updateBookingStatus notice:', err);
+      }
+    }
+
     const data = this.ensureStore();
     const index = data.bookings.findIndex((b) => b.id.toUpperCase() === id.toUpperCase());
     if (index === -1) return null;
@@ -514,12 +713,12 @@ class DatabaseStore {
     if (partnerUpdate) {
       data.bookings[index].partner = partnerUpdate;
     }
-    data.bookings[index].updatedAt = new Date().toISOString();
+    data.bookings[index].updatedAt = now;
     this.saveStore(data);
     return data.bookings[index];
   }
 
-  public createSubscription(payload: {
+  public async createSubscription(payload: {
     customerName: string;
     phone: string;
     serviceId: string;
@@ -529,22 +728,20 @@ class DatabaseStore {
     slotId: 'morning' | 'afternoon' | 'evening';
     address: BookingAddress;
     startDate?: string;
-  }): SubscriptionRecord {
+  }): Promise<SubscriptionRecord> {
     const data = this.ensureStore();
     const service = data.services.find((s) => s.id === payload.serviceId) || data.services[0];
     const tier = service.tiers.find((t) => t.id === payload.tierId) || service.tiers[0];
     const slot = data.slots.find((s) => s.id === payload.slotId) || data.slots[0];
 
-    // Discounts by cadence
     const discountMap = {
-      WEEKLY: 20, // 20% off
-      BI_WEEKLY: 15, // 15% off
-      MONTHLY: 10, // 10% off
+      WEEKLY: 20,
+      BI_WEEKLY: 15,
+      MONTHLY: 10,
     };
     const discountPercentage = discountMap[payload.frequency] || 15;
     const perVisitAmount = Math.round(tier.price * (1 - discountPercentage / 100));
 
-    // Generate upcoming 4 visit dates automatically
     const nextVisits = [];
     const baseDate = payload.startDate ? new Date(payload.startDate) : new Date();
     const intervalDays = payload.frequency === 'WEEKLY' ? 7 : payload.frequency === 'BI_WEEKLY' ? 14 : 28;
@@ -583,33 +780,120 @@ class DatabaseStore {
       updatedAt: now,
     };
 
+    if (getPostgresPool()) {
+      try {
+        await ensurePostgresSchema();
+        await query(
+          `INSERT INTO subscriptions (
+            id, customer_name, phone, service_id, service_name, tier_id, tier_name,
+            frequency, preferred_day, slot_id, slot_time, address, per_visit_amount,
+            discount_percentage, status, next_visits, created_at, updated_at
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)`,
+          [
+            subscription.id,
+            subscription.customerName,
+            subscription.phone,
+            subscription.serviceId,
+            subscription.serviceName,
+            subscription.tierId,
+            subscription.tierName,
+            subscription.frequency,
+            subscription.preferredDay,
+            subscription.slotId,
+            subscription.slotTime,
+            JSON.stringify(subscription.address),
+            subscription.perVisitAmount,
+            subscription.discountPercentage,
+            subscription.status,
+            JSON.stringify(subscription.nextVisits),
+            subscription.createdAt,
+            subscription.updatedAt,
+          ]
+        );
+      } catch (err) {
+        console.warn('PostgreSQL subscription insert notice:', err);
+      }
+    }
+
     data.subscriptions.unshift(subscription);
     this.saveStore(data);
     return subscription;
   }
 
-  public getSubscriptionsByPhone(phone: string): SubscriptionRecord[] {
+  public async getSubscriptionsByPhone(phone: string): Promise<SubscriptionRecord[]> {
     const cleanPhone = phone.replace(/\D/g, '').slice(-10);
+
+    if (getPostgresPool()) {
+      try {
+        await ensurePostgresSchema();
+        const res = await query(
+          `SELECT * FROM subscriptions 
+           WHERE RIGHT(REGEXP_REPLACE(phone, '\\D', '', 'g'), 10) = $1 
+           ORDER BY created_at DESC`,
+          [cleanPhone]
+        );
+        if (res.rows.length > 0) {
+          return res.rows.map((r) => ({
+            id: r.id,
+            customerName: r.customer_name,
+            phone: r.phone,
+            serviceId: r.service_id,
+            serviceName: r.service_name,
+            tierId: r.tier_id,
+            tierName: r.tier_name,
+            frequency: r.frequency,
+            preferredDay: r.preferred_day,
+            slotId: r.slot_id,
+            slotTime: r.slot_time,
+            address: typeof r.address === 'string' ? JSON.parse(r.address) : r.address,
+            perVisitAmount: parseFloat(r.per_visit_amount),
+            discountPercentage: r.discount_percentage,
+            status: r.status,
+            nextVisits: typeof r.next_visits === 'string' ? JSON.parse(r.next_visits) : r.next_visits,
+            createdAt: r.created_at,
+            updatedAt: r.updated_at,
+          }));
+        }
+      } catch (err) {
+        console.warn('PostgreSQL getSubscriptionsByPhone notice, using store fallback:', err);
+      }
+    }
+
     return this.ensureStore().subscriptions.filter((s) => {
       const sPhone = s.phone.replace(/\D/g, '').slice(-10);
       return sPhone === cleanPhone;
     });
   }
 
-  public updateSubscriptionStatus(
+  public async updateSubscriptionStatus(
     id: string,
     status: 'ACTIVE' | 'PAUSED' | 'CANCELLED'
-  ): SubscriptionRecord | null {
+  ): Promise<SubscriptionRecord | null> {
+    const now = new Date().toISOString();
+
+    if (getPostgresPool()) {
+      try {
+        await ensurePostgresSchema();
+        await query(
+          `UPDATE subscriptions 
+           SET status = $1, updated_at = $2 
+           WHERE UPPER(id) = UPPER($3)`,
+          [status, now, id]
+        );
+      } catch (err) {
+        console.warn('PostgreSQL updateSubscriptionStatus notice:', err);
+      }
+    }
+
     const data = this.ensureStore();
     const index = data.subscriptions.findIndex((s) => s.id.toUpperCase() === id.toUpperCase());
     if (index === -1) return null;
 
     data.subscriptions[index].status = status;
-    data.subscriptions[index].updatedAt = new Date().toISOString();
+    data.subscriptions[index].updatedAt = now;
     this.saveStore(data);
     return data.subscriptions[index];
   }
 }
 
 export const dbStore = new DatabaseStore();
-

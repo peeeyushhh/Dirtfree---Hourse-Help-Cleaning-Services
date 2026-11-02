@@ -23,10 +23,9 @@ jobs:
           port: ${{ secrets.SERVER_PORT || 22 }}
           script: |
             set -e
-            echo "🚀 Deploying DirtFree UI to Oracle Cloud VPS..."
+            echo "🚀 Deploying DirtFree UI & Database to Oracle Cloud VPS..."
             cd /home/${{ secrets.SERVER_USER }}/dirtfree-ui
             git pull origin main
-            docker compose down
             docker compose up --build -d
             docker image prune -f
             echo "✅ Deployment completed successfully!"

@@ -9,7 +9,7 @@ export async function GET(
 ) {
   try {
     const { id } = await params;
-    const booking = dbStore.getBookingById(id);
+    const booking = await dbStore.getBookingById(id);
 
     if (!booking) {
       return NextResponse.json(
@@ -74,7 +74,7 @@ export async function PATCH(
       );
     }
 
-    const updated = dbStore.updateBookingStatus(id, status, partner);
+    const updated = await dbStore.updateBookingStatus(id, status, partner);
     if (!updated) {
       return NextResponse.json(
         { success: false, error: `Booking not found: ${id}` },

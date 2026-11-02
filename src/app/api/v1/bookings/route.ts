@@ -18,7 +18,7 @@ export async function GET(request: NextRequest) {
     }
 
     const cleanPhone = SecuritySanitizer.normalizePhone(rawPhone) || rawPhone.replace(/\D/g, '').slice(-10);
-    const bookings = dbStore.getBookingsByPhone(cleanPhone);
+    const bookings = await dbStore.getBookingsByPhone(cleanPhone);
 
     return NextResponse.json({
       success: true,
@@ -114,7 +114,7 @@ export async function POST(request: NextRequest) {
 
     const sanitizedNotes = notes ? SecuritySanitizer.sanitizeString(notes, 300) : undefined;
 
-    const booking = dbStore.createBooking({
+    const booking = await dbStore.createBooking({
       customerName: cleanName,
       phone: cleanPhone,
       serviceId,

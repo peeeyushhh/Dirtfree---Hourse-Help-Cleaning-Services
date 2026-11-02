@@ -12,7 +12,7 @@ export async function GET(request: NextRequest) {
 
     if (rawPhone) {
       const cleanPhone = SecuritySanitizer.normalizePhone(rawPhone) || rawPhone.replace(/\D/g, '').slice(-10);
-      const list = dbStore.getSubscriptionsByPhone(cleanPhone);
+      const list = await dbStore.getSubscriptionsByPhone(cleanPhone);
       return NextResponse.json({
         success: true,
         subscriptions: list,
@@ -99,7 +99,7 @@ export async function POST(request: NextRequest) {
       type: (['Home', 'Office', 'Other'].includes(address.type) ? address.type : 'Home') as 'Home' | 'Office' | 'Other',
     };
 
-    const subscription = dbStore.createSubscription({
+    const subscription = await dbStore.createSubscription({
       customerName: cleanName,
       phone: cleanPhone,
       serviceId: serviceId || 'full-home-cleaning',
@@ -137,7 +137,7 @@ export async function PATCH(request: NextRequest) {
       );
     }
 
-    const updated = dbStore.updateSubscriptionStatus(id, status);
+    const updated = await dbStore.updateSubscriptionStatus(id, status);
     if (!updated) {
       return NextResponse.json(
         { success: false, error: `Subscription not found: ${id}` },

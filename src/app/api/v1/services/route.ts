@@ -5,7 +5,7 @@ export const dynamic = 'force-dynamic';
 
 export async function GET() {
   try {
-    const services = dbStore.getServices();
+    const services = await dbStore.getServices();
     return NextResponse.json({
       success: true,
       count: services.length,

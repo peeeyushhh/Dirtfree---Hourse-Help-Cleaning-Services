@@ -16,7 +16,7 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const slots = dbStore.getSlotAvailability(date);
+    const slots = await dbStore.getSlotAvailability(date);
 
     return NextResponse.json({
       success: true,

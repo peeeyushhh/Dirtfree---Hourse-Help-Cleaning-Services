@@ -1,10 +1,40 @@
 services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: dirtfree-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-dirtfree_db}
+      POSTGRES_USER: ${POSTGRES_USER:-dirtfree_admin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dirtfree_secure_pass_2026}
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-db.sql:/docker-entrypoint-initdb.d/init-db.sql:ro
+    deploy:
+      resources:
+        limits:
+          memory: 400M
+        reservations:
+          memory: 100M
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-dirtfree_admin} -d $${POSTGRES_DB:-dirtfree_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - dirtfree-net
+
   dirtfree-ui:
     build:
       context: .
       dockerfile: Dockerfile
     container_name: dirtfree-ui
     restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
     ports:
       - "127.0.0.1:3000:3000"
     volumes:
@@ -18,10 +48,20 @@ services:
     environment:
       - NODE_ENV=production
       - PORT=3000
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-dirtfree_admin}:${POSTGRES_PASSWORD:-dirtfree_secure_pass_2026}@postgres:5432/${POSTGRES_DB:-dirtfree_db}
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:3000/ || exit 1"]
       interval: 30s
       timeout: 5s
       retries: 3
       start_period: 10s
+    networks:
+      - dirtfree-net
 
+volumes:
+  postgres_data:
+    driver: local
+
+networks:
+  dirtfree-net:
+    driver: bridge
