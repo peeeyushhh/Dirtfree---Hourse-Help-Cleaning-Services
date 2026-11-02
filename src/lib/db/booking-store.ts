@@ -70,10 +70,35 @@ export interface BookingRecord {
   updatedAt: string;
 }
 
+export interface SubscriptionRecord {
+  id: string; // SUB-XXXXX
+  customerName: string;
+  phone: string;
+  serviceId: string;
+  serviceName: string;
+  tierId: string;
+  tierName: string;
+  frequency: 'WEEKLY' | 'BI_WEEKLY' | 'MONTHLY';
+  preferredDay: string; // e.g., 'Saturday'
+  slotId: 'morning' | 'afternoon' | 'evening';
+  slotTime: string;
+  address: BookingAddress;
+  perVisitAmount: number;
+  discountPercentage: number;
+  status: 'ACTIVE' | 'PAUSED' | 'CANCELLED';
+  nextVisits: {
+    date: string;
+    status: 'SCHEDULED' | 'COMPLETED' | 'SKIPPED';
+  }[];
+  createdAt: string;
+  updatedAt: string;
+}
+
 interface DatabaseSchema {
   services: ServiceItem[];
   slots: TimeSlot[];
   bookings: BookingRecord[];
+  subscriptions: SubscriptionRecord[];
 }
 
 const DB_DIR = path.join(process.cwd(), 'data');
@@ -311,6 +336,7 @@ class DatabaseStore {
         services: INITIAL_SERVICES,
         slots: INITIAL_SLOTS,
         bookings: [],
+        subscriptions: [],
       };
       fs.writeFileSync(DB_FILE, JSON.stringify(initial, null, 2), 'utf-8');
       return initial;
@@ -328,12 +354,16 @@ class DatabaseStore {
       if (!Array.isArray(data.bookings)) {
         data.bookings = [];
       }
+      if (!Array.isArray(data.subscriptions)) {
+        data.subscriptions = [];
+      }
       return data;
     } catch {
       const reset: DatabaseSchema = {
         services: INITIAL_SERVICES,
         slots: INITIAL_SLOTS,
         bookings: [],
+        subscriptions: [],
       };
       fs.writeFileSync(DB_FILE, JSON.stringify(reset, null, 2), 'utf-8');
       return reset;
@@ -488,6 +518,98 @@ class DatabaseStore {
     this.saveStore(data);
     return data.bookings[index];
   }
+
+  public createSubscription(payload: {
+    customerName: string;
+    phone: string;
+    serviceId: string;
+    tierId: string;
+    frequency: 'WEEKLY' | 'BI_WEEKLY' | 'MONTHLY';
+    preferredDay: string;
+    slotId: 'morning' | 'afternoon' | 'evening';
+    address: BookingAddress;
+    startDate?: string;
+  }): SubscriptionRecord {
+    const data = this.ensureStore();
+    const service = data.services.find((s) => s.id === payload.serviceId) || data.services[0];
+    const tier = service.tiers.find((t) => t.id === payload.tierId) || service.tiers[0];
+    const slot = data.slots.find((s) => s.id === payload.slotId) || data.slots[0];
+
+    // Discounts by cadence
+    const discountMap = {
+      WEEKLY: 20, // 20% off
+      BI_WEEKLY: 15, // 15% off
+      MONTHLY: 10, // 10% off
+    };
+    const discountPercentage = discountMap[payload.frequency] || 15;
+    const perVisitAmount = Math.round(tier.price * (1 - discountPercentage / 100));
+
+    // Generate upcoming 4 visit dates automatically
+    const nextVisits = [];
+    const baseDate = payload.startDate ? new Date(payload.startDate) : new Date();
+    const intervalDays = payload.frequency === 'WEEKLY' ? 7 : payload.frequency === 'BI_WEEKLY' ? 14 : 28;
+
+    for (let i = 1; i <= 4; i++) {
+      const visitDate = new Date(baseDate);
+      visitDate.setDate(baseDate.getDate() + i * intervalDays);
+      nextVisits.push({
+        date: visitDate.toISOString().split('T')[0],
+        status: 'SCHEDULED' as const,
+      });
+    }
+
+    const randomNum = Math.floor(1000 + Math.random() * 9000);
+    const subId = `SUB-${randomNum}`;
+    const now = new Date().toISOString();
+
+    const subscription: SubscriptionRecord = {
+      id: subId,
+      customerName: payload.customerName.trim(),
+      phone: payload.phone.trim(),
+      serviceId: service.id,
+      serviceName: service.title,
+      tierId: tier.id,
+      tierName: tier.name,
+      frequency: payload.frequency,
+      preferredDay: payload.preferredDay,
+      slotId: slot.id,
+      slotTime: slot.timeRange,
+      address: payload.address,
+      perVisitAmount,
+      discountPercentage,
+      status: 'ACTIVE',
+      nextVisits,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    data.subscriptions.unshift(subscription);
+    this.saveStore(data);
+    return subscription;
+  }
+
+  public getSubscriptionsByPhone(phone: string): SubscriptionRecord[] {
+    const cleanPhone = phone.replace(/\D/g, '').slice(-10);
+    return this.ensureStore().subscriptions.filter((s) => {
+      const sPhone = s.phone.replace(/\D/g, '').slice(-10);
+      return sPhone === cleanPhone;
+    });
+  }
+
+  public updateSubscriptionStatus(
+    id: string,
+    status: 'ACTIVE' | 'PAUSED' | 'CANCELLED'
+  ): SubscriptionRecord | null {
+    const data = this.ensureStore();
+    const index = data.subscriptions.findIndex((s) => s.id.toUpperCase() === id.toUpperCase());
+    if (index === -1) return null;
+
+    data.subscriptions[index].status = status;
+    data.subscriptions[index].updatedAt = new Date().toISOString();
+    this.saveStore(data);
+    return data.subscriptions[index];
+  }
 }
 
 export const dbStore = new DatabaseStore();
+
